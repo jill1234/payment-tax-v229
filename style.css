@@ -287,3 +287,8 @@ form label:has(>input:is([type="date"],[type="month"],[type="datetime-local"])){
     line-height:normal;
   }
 }
+
+/* V2.2.9 F03 installment editing and status */
+.f03-status{display:inline-block!important;width:max-content;padding:5px 11px;border-radius:999px;font-weight:600;white-space:nowrap}
+.f03-active{background:#fff0d9;color:#9a570b}.f03-closed{background:#dff3e4;color:#267345}
+.f03-panel{max-height:85vh;overflow:auto}.f03-row{display:flex;gap:12px;justify-content:space-between;align-items:center;margin:10px 0}.f03-row input{max-width:150px}.f03-row input:disabled{opacity:.65}.f03-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}.f03-error{color:#b42318}.f03-sum{font-weight:600}

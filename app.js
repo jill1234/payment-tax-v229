@@ -10,6 +10,7 @@ const money=n=>'NT$'+new Intl.NumberFormat('zh-TW',{maximumFractionDigits:0,mini
 const cents=v=>Math.round(Number(v))*100; // V2.2 新輸入金額以整數元儲存；舊測試資料不自動改寫
 const fmtDate=d=>`${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
 function monthDue(first,offset){const [y,m,d]=first.split('-').map(Number);const target=new Date(Date.UTC(y,m-1+offset,1));const last=new Date(Date.UTC(target.getUTCFullYear(),target.getUTCMonth()+1,0)).getUTCDate();target.setUTCDate(Math.min(d,last));return fmtDate(target)}
+function planDueByFrequency(first,offset,frequency){if(frequency==='weekly')return shiftDay(first,offset*7);return monthDue(first,offset*({monthly:1,quarterly:3,yearly:12}[frequency]||1))}
 function openDb(){return new Promise((resolve,reject)=>{const r=indexedDB.open(DB_NAME,DB_VERSION);r.onupgradeneeded=()=>{for(const name of STORES){if(!r.result.objectStoreNames.contains(name))r.result.createObjectStore(name,{keyPath:'id'})}};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);r.onblocked=()=>reject(new Error('資料庫被其他頁面占用'))})}
 function all(store){return new Promise((resolve,reject)=>{const t=db.transaction(store,'readonly');const r=t.objectStore(store).getAll();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}
 function saveMany(data){return new Promise((resolve,reject)=>{const names=[...new Set(data.map(x=>x.store)),'audit'];const tx=db.transaction(names,'readwrite');for(const {store,value} of data){tx.objectStore(store).put(value);tx.objectStore('audit').put({id:uid(),at:new Date().toISOString(),action:'create',store,entityId:value.id,after:value})}tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error)})}
@@ -19,7 +20,7 @@ function addItem(root,title,lines,chip){const el=document.createElement('article
 async function renderStage1Unused(){const [plans,inst,tax,periods]=await Promise.all(['installmentPlans','installments','taxBills','cardPeriods'].map(all));$('nPlans').textContent=plans.length;$('nTax').textContent=tax.length;$('nPeriods').textContent=periods.length;for(const id of ['planList','taxList','cardList','recent'])$(id).replaceChildren();for(const p of plans.sort((a,b)=>b.createdAt.localeCompare(a.createdAt))){const related=inst.filter(x=>x.planId===p.id);addItem($('planList'),p.name,[`共 ${p.count} 期｜總額 ${money(p.totalCents/100)}`,`第一期 ${p.firstDue}｜最後一期 ${related.at(-1)?.due??''}`],'未開始繳款紀錄');addItem($('recent'),`分期｜${p.name}`,[p.createdAt.slice(0,10)])}for(const t of tax.sort((a,b)=>b.createdAt.localeCompare(a.createdAt))){addItem($('taxList'),`${t.year} 年｜${t.name}`,[`截止日 ${t.due}`,t.amountCents===null?'待確認稅額':`應繳 ${money(t.amountCents/100)}`],t.amountCents===null?'待確認稅額':'尚未建立繳款紀錄');addItem($('recent'),`稅務｜${t.name}`,[t.createdAt.slice(0,10)])}for(const p of periods.sort((a,b)=>b.createdAt.localeCompare(a.createdAt))){addItem($('cardList'),p.cardName,[`${{monthly:'每月',single:'單月',bimonthly:'雙月'}[p.mode]}｜${p.start}～${p.end}`,`最低消費 ${money(p.thresholdCents/100)}`],'尚未建立消費紀錄');addItem($('recent'),`信用卡｜${p.cardName}`,[p.createdAt.slice(0,10)])}if(!plans.length&&!tax.length&&!periods.length)$('recent').append(textNode('p','尚無測試資料。'))}
 function formData(form){return Object.fromEntries(new FormData(form))}
 function validMoney(v,allowZero=false){return v!==''&&Number.isFinite(Number(v))&&(allowZero?Math.round(Number(v))>=0:Math.round(Number(v))>0)&&Number.isSafeInteger(cents(v))}
-async function createPlan(e){e.preventDefault();const f=e.currentTarget,v=formData(f);try{const count=Number(v.count);if(!Number.isInteger(count)||count<1||count>600)throw Error('期數需介於 1～600');if(!/^\d{4}-\d{2}-\d{2}$/.test(v.firstDue))throw Error('請填寫第一期到期日');const hasTotal=v.total!=='',hasPer=v.per!=='';if(hasTotal===hasPer)throw Error('總金額與每期金額請擇一填寫');const raw=hasTotal?v.total:v.per;if(!validMoney(raw))throw Error('金額必須大於零');const total=hasTotal?cents(raw):cents(raw)*count;if(!Number.isSafeInteger(total)||total<count)throw Error('金額或期數超出有效範圍');const base=hasTotal?Math.floor((total/100)/count)*100:cents(raw);const planId=uid(),at=new Date().toISOString();const plan={id:planId,name:v.name.trim(),count,totalCents:total,firstDue:v.firstDue,createdAt:at,status:'active',archived:false};if(!plan.name)throw Error('請輸入計畫名稱');const entries=[{store:'installmentPlans',value:plan}];for(let i=0;i<count;i++)entries.push({store:'installments',value:{id:uid(),planId,number:i+1,due:monthDue(v.firstDue,i),amountCents:i===0?total-base*(count-1):base,paidCents:0,reconciled:false,status:'active'}});await saveMany(entries);f.reset();await render();message('分期計畫已建立（階段 1 測試資料）')}catch(err){message(`無法建立：${err.message}`)}}
+async function createPlan(e){e.preventDefault();const f=e.currentTarget,v=formData(f);try{const count=Number(v.count);if(!['weekly','monthly','quarterly','yearly'].includes(v.frequency))throw Error('繳款週期不正確');if(!Number.isInteger(count)||count<1||count>600)throw Error('期數需介於 1～600');if(!/^\d{4}-\d{2}-\d{2}$/.test(v.firstDue))throw Error('請填寫第一期到期日');const hasTotal=v.total!=='',hasPer=v.per!=='';if(hasTotal===hasPer)throw Error('總金額與每期金額請擇一填寫');const raw=hasTotal?v.total:v.per;if(!validMoney(raw))throw Error('金額必須大於零');const total=hasTotal?cents(raw):cents(raw)*count;if(!Number.isSafeInteger(total)||total<count*100)throw Error('總金額必須足夠讓每期至少 1 元');const base=hasTotal?Math.floor((total/100)/count)*100:cents(raw);const planId=uid(),at=new Date().toISOString();const plan={id:planId,name:v.name.trim(),count,totalCents:total,firstDue:v.firstDue,frequency:v.frequency,createdAt:at,status:'active',archived:false};if(!plan.name)throw Error('請輸入計畫名稱');const entries=[{store:'installmentPlans',value:plan}];for(let i=0;i<count;i++)entries.push({store:'installments',value:{id:uid(),planId,number:i+1,due:planDueByFrequency(v.firstDue,i,v.frequency),amountCents:i===0?total-base*(count-1):base,paidCents:0,reconciled:false,status:'active'}});await saveMany(entries);f.reset();await render();message('分期計畫已建立')}catch(err){message(`無法建立：${err.message}`)}}
 async function createTax(e){e.preventDefault();const f=e.currentTarget,v=formData(f);try{if(!Number.isInteger(Number(v.year))||Number(v.year)<1900||Number(v.year)>2200)throw Error('年度不正確');if(v.amount!==''&&!validMoney(v.amount,true))throw Error('稅額不正確');const record={id:uid(),sourceTemplateId:null,year:Number(v.year),name:v.name.trim(),due:v.due,amountCents:v.amount===''?null:cents(v.amount),paidCents:0,status:v.amount===''?'amount-pending':'unpaid',createdAt:new Date().toISOString()};if(!record.name||!record.due)throw Error('請填寫名稱及截止日');await saveMany([{store:'taxBills',value:record}]);f.reset();f.elements.year.value=new Date().getFullYear();await render();message('稅單已建立（階段 1 測試資料）')}catch(err){message(`無法建立：${err.message}`)}}
 async function createCard(e){e.preventDefault();const f=e.currentTarget,v=formData(f);try{if(!validMoney(v.threshold,true))throw Error('最低消費門檻不正確');if(!v.start||!v.end||v.start>v.end)throw Error('結束日期不可早於開始日期');const cardId=uid(),periodId=uid(),at=new Date().toISOString();const card={id:cardId,name:v.name.trim(),mode:v.mode,createdAt:at};if(!card.name)throw Error('請輸入信用卡名稱');const period={id:periodId,cardId,cardName:card.name,mode:v.mode,start:v.start,end:v.end,thresholdCents:cents(v.threshold),createdAt:at};await saveMany([{store:'cards',value:card},{store:'cardPeriods',value:period}]);f.reset();await render();message('信用卡期間已建立（階段 1 測試資料）')}catch(err){message(`無法建立：${err.message}`)}}
 async function exportData(){try{const out={format:'payment-tax-v22-stage2-test-export',exportedAt:new Date().toISOString(),stores:{}};for(const s of STORES)out.stores[s]=await all(s);const blob=new Blob([JSON.stringify(out,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`payment-tax-v22-stage2-test-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);message('測試資料已匯出，請確認檔案已儲存。')}catch(err){message(`匯出失敗：${err.message}`)}}
@@ -605,4 +606,66 @@ render = async function(){
   for(const row of [...cards.children]){
     if(row.classList.contains('data-row')&&row.textContent.includes('目前沒有'))row.classList.add('overview-empty');
   }
+};
+
+// V2.2.9 F01-F04: installment plan controls and payment attachment consistency.
+const deletePaymentBeforeF03=deletePaymentV22;
+deletePaymentV22=async function(kind,id){
+ if(kind==='installment'&&(await all('installmentPayments')).some(x=>x.id===id&&x.earlySettlementGroup))return message('提前結清付款不能逐期刪除，請先核對或還原整筆');
+ const store=kind==='installment'?'installmentPayments':'taxPayments';
+ const attached=(await all('attachments')).filter(a=>a.kind===kind&&a.transactionId===id);
+ if(!confirm(attached.length?'確定刪除此筆未核對付款嗎？此筆付款的附件也會一併刪除，刪除後無法復原。':'確定刪除此筆未核對付款嗎？刪除後無法復原。'))return;
+ await performV22([store,'attachments',kind==='installment'?'installments':'taxBills','installmentPlans'],(d,ops)=>{
+  const pay=d[store].find(x=>x.id===id);assertV22(pay&&!isConfirmed(pay),'僅能刪除待核對付款');parentInfoV22(kind,pay,d);
+  for(const a of d.attachments.filter(x=>x.kind===kind&&x.transactionId===id))ops.del('attachments',a.id);
+  ops.del(store,id);
+ },'付款及其附件已刪除');
+};
+const F03_STORES=['installmentPlans','installments','installmentPayments','attachments'];
+function f03Related(d,planId){const periods=d.installments.filter(i=>i.planId===planId);const ids=new Set(periods.map(i=>i.id));const payments=d.installmentPayments.filter(x=>ids.has(x.installmentId));const payIds=new Set(payments.map(x=>x.id));const attachments=d.attachments.filter(a=>a.kind==='installment'&&payIds.has(a.transactionId));return {periods,payments,attachments}}
+function f03Locked(d,period){const payments=d.installmentPayments.filter(x=>x.installmentId===period.id);const payIds=new Set(payments.map(x=>x.id));return payments.length>0||period.reconciled===true||Number(period.paidCents||0)>0||d.attachments.some(a=>a.kind==='installment'&&payIds.has(a.transactionId))}
+async function f03DeletePlan(id){
+ const plan=(await all('installmentPlans')).find(p=>p.id===id);if(!plan)return message('找不到分期計畫');
+ if(!confirm(`確定刪除「${plan.name}」嗎？刪除後無法復原。`))return;
+ try{await txAtomicV22(F03_STORES,(d,ops)=>{
+  const p=d.installmentPlans.find(x=>x.id===id);assertV22(p&&!p.archived,'計畫不存在或已歸檔');
+  const {periods,payments,attachments}=f03Related(d,id);
+  assertV22(periods.length===p.count,'期數資料不完整，請先檢查');
+  assertV22(!payments.length&&!attachments.length&&periods.every(i=>!i.reconciled&&!Number(i.paidCents||0)),'仍有繳款、核對紀錄或附件，不能刪除');
+  for(const i of periods)ops.del('installments',i.id);
+  ops.del('installmentPlans',id);
+ });planView.selectedId=null;await render();message('分期計畫已刪除')}
+ catch(e){message('無法刪除分期計畫：'+e.message)}
+}
+let f03Editor=null;
+function f03Dialog(){let dialog=$('f03EditDialog');if(dialog)return dialog;
+ dialog=document.createElement('div');dialog.id='f03EditDialog';dialog.className='attachment-dialog';dialog.hidden=true;
+ const panel=document.createElement('div');panel.className='attachment-panel f03-panel';dialog.append(panel);document.body.append(dialog);return dialog;
+}
+function f03Changed(){if(!f03Editor)return false;return f03Editor.rows.some(r=>r.input.value!==r.original)}
+function f03Close(){if(f03Changed()&&!confirm('資料尚未儲存，確定放棄修改嗎？'))return;f03Dialog().hidden=true;f03Editor=null}
+async function f03OpenEdit(id){
+ const [plans,inst,payments,attachments]=await Promise.all(F03_STORES.map(all));const d={installmentPlans:plans,installments:inst,installmentPayments:payments,attachments};const p=plans.find(x=>x.id===id);if(!p||p.archived)return message('此分期無法修改');
+ const periods=inst.filter(x=>x.planId===id).sort((a,b)=>a.number-b.number);const dialog=f03Dialog(),panel=dialog.firstChild;panel.replaceChildren();
+ panel.append(textNode('h3',`批次修改金額｜${p.name}`),textNode('p',`計畫總額 ${money(p.totalCents/100)}，只可修改沒有繳款、核對紀錄及附件的期數。`));
+ const rows=[];for(const period of periods){const row=document.createElement('label');row.className='f03-row';row.append(textNode('span',`第 ${period.number} 期｜${period.due}${f03Locked(d,period)?'（鎖定）':''}`));const input=document.createElement('input');input.type='number';input.step='1';input.min='1';input.value=String(period.amountCents/100);input.disabled=f03Locked(d,period);row.append(input);panel.append(row);rows.push({id:period.id,original:input.value,input})}
+ const sum=textNode('p','');sum.className='f03-sum';panel.append(sum);const error=textNode('p','');error.className='f03-error';panel.append(error);
+ const actions=document.createElement('div');actions.className='f03-actions';const save=btnV22('儲存金額',()=>f03Save());save.classList.add('primary');actions.append(save,btnV22('取消',f03Close));panel.append(actions);
+ f03Editor={id,rows,total:p.totalCents,error,save};function update(){let total=0,valid=true;for(const r of rows){const v=r.input.value;if(!/^\d+$/.test(v)||!Number.isSafeInteger(Number(v))||Number(v)<1)valid=false;else total+=Number(v)*100}const diff=p.totalCents-total;sum.textContent=`目前合計 ${money(total/100)}｜差額 ${money(diff/100)}${valid&&diff===0?'｜可以儲存':'｜請調整金額'}`;save.disabled=!valid||diff!==0||!f03Changed()}rows.forEach(r=>r.input.addEventListener('input',update));update();dialog.hidden=false;
+}
+async function f03Save(){const editor=f03Editor;if(!editor)return;const amounts=new Map();let sum=0;for(const r of editor.rows){const v=r.input.value;assertV22(/^\d+$/.test(v)&&Number.isSafeInteger(Number(v))&&Number(v)>=1,'每期金額必須是大於 0 的整數');const amount=Number(v)*100;assertV22(Number.isSafeInteger(amount),'金額超出範圍');amounts.set(r.id,amount);sum+=amount}if(sum!==editor.total){editor.error.textContent='各期合計與原分期總金額不一致';return}
+ editor.save.disabled=true;editor.error.textContent='';try{await txAtomicV22(F03_STORES,(d,ops)=>{
+  const p=d.installmentPlans.find(x=>x.id===editor.id);assertV22(p&&!p.archived&&p.totalCents===editor.total,'計畫已異動，請重新開啟');
+  const periods=d.installments.filter(i=>i.planId===editor.id);assertV22(periods.length===amounts.size,'期數已異動');
+  let total=0;for(const period of periods){const next=amounts.get(period.id);assertV22(Number.isSafeInteger(next)&&next>=100,'期數或金額錯誤');if(next!==period.amountCents){assertV22(!f03Locked(d,period),`第 ${period.number} 期已有繳款、核對紀錄或附件`);period.amountCents=next;ops.put('installments',period)}total+=next}assertV22(total===p.totalCents,'總金額不一致');
+ });f03Editor=null;f03Dialog().hidden=true;await render();message('分期金額已儲存')}
+ catch(e){editor.error.textContent='儲存失敗：'+e.message+'。原資料未變更，輸入內容已保留。';editor.save.disabled=false}
+}
+const f03PreviousRender=render;
+render=async function(){await f03PreviousRender();
+ const [plans,inst,payments]=await Promise.all(['installmentPlans','installments','installmentPayments'].map(all));
+ const selected=plans.find(p=>p.id===planView.selectedId);
+ if(selected&&!selected.archived){const header=$('planDetailHeader');const actions=document.createElement('div');actions.className='f03-actions';actions.append(btnV22('修改各期金額',()=>f03OpenEdit(selected.id)),btnV22('刪除整筆計畫',()=>f03DeletePlan(selected.id)));header.append(actions)}
+ const visible=plans.filter(p=>filterPlanV22(p,inst,payments)&&p.name.toLowerCase().includes(planView.search.toLowerCase())).sort((a,b)=>(planNextV22(a,inst,payments)||'9999').localeCompare(planNextV22(b,inst,payments)||'9999'));
+ const list=$('planList');for(const [index,row] of [...list.children].entries()){const p=visible[(planView.page-1)*planView.pageSize+index];if(!p)continue;const status=[...row.children].find(x=>x.textContent==='進行中'||x.textContent==='已結清');if(status)status.classList.add('f03-status',planDueV22(p,inst,payments)?'f03-active':'f03-closed')}
 };
