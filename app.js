@@ -329,7 +329,36 @@ render=async function(){
  }
  if(!related.length)rowV22(years,['目前沒有年度稅單']);
 };
-async function init(){try{db=await openDb();document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id===b.dataset.tab));$('message').textContent=''}));$('planSearch').addEventListener('input',e=>{planView.search=e.target.value;planView.page=1;render()});$('planFilter').addEventListener('change',e=>{planView.filter=e.target.value;planView.page=1;render()});$('backToPlans').addEventListener('click',()=>{planView.selectedId=null;render();$('plans').scrollIntoView({block:'start'})});$('planForm').addEventListener('submit',createPlan);$('taxForm').addEventListener('submit',createTax);$('cardForm').addEventListener('submit',createCard);$('cardTransactionForm').addEventListener('submit',createCardTransaction);$('cardRefundForm').addEventListener('submit',createRefundV22);$('existingPeriodForm').addEventListener('submit',createExistingPeriodV22);$('taxTemplateForm').addEventListener('submit',createTaxTemplate);$('generateTaxBills').addEventListener('click',generateYearTaxes);$('generateTaxYear').value=new Date().getFullYear();$('historyCategory').addEventListener('change',()=>render());$('historySearch').addEventListener('input',()=>render());$('clearHistory').addEventListener('click',()=>{$('historyCategory').value='all';$('historySearch').value='';if($('historyArchiveV227'))$('historyArchiveV227').value='all';render()});$('historyCsv').addEventListener('click',exportHistoryCsv);$('historyPdf').addEventListener('click',printHistory);$('taxForm').elements.year.value=new Date().getFullYear();$('taxBack').addEventListener('click',()=>{selectedTaxMasterV24=null;render()});await ensureCurrentTaxYearV24();await render()}catch(err){message(`無法啟動資料庫：${err.message}`);document.querySelectorAll('form button').forEach(x=>x.disabled=true)}}init();
+// F05: form visibility only; IndexedDB schema and existing business rules are unchanged.
+const f05Panels=[['planForm','f05-plan-new'],['taxTemplateForm','f05-tax-new'],['cardForm','f05-card-new']];
+const f05State=new Map();
+function f05Snapshot(form){return JSON.stringify([...new FormData(form).entries()]);}
+function f05Dirty(id){const f=$(id),s=f05State.get(id);return !!(s?.open&&f05Snapshot(f)!==s.initial);}
+function f05DiscardAllowed(id){return !f05Dirty(id)||confirm('資料尚未儲存，確定放棄修改嗎？');}
+function f05SetOpen(id,open){const f=$(id),panel=f.closest('.f05-new-panel'),toggle=panel.querySelector('.f05-toggle');
+ f.hidden=!open;toggle.setAttribute('aria-expanded',String(open));panel.querySelector('.f05-chevron').textContent=open?'收合 ▴':'展開 ▾';
+ f05State.set(id,{open,initial:f05Snapshot(f)});
+}
+function f05Init(){
+ for(const [id,wrapper] of f05Panels){const form=$(id),toggle=$(wrapper).querySelector('.f05-toggle');f05SetOpen(id,false);
+  toggle.addEventListener('click',()=>{const opening=form.hidden;if(!opening&&!f05DiscardAllowed(id))return;f05SetOpen(id,opening)});
+ }
+ // The existing tab handler changes views without navigation. Intercept it before state changes.
+ document.querySelectorAll('nav button').forEach(button=>button.addEventListener('click',e=>{
+  const current=document.querySelector('.page.active');const id=current?.querySelector('.f05-new-panel form')?.id;
+  if(id&&button.dataset.tab!==current.id&&!f05DiscardAllowed(id)){e.stopImmediatePropagation();e.preventDefault();return;}
+  if(id&&button.dataset.tab!==current.id){if(f05Dirty(id))$(id).reset();f05SetOpen(id,false)}
+ },true));
+ window.addEventListener('beforeunload',e=>{if(f05Panels.some(([id])=>f05Dirty(id))){e.preventDefault();e.returnValue='';}});
+}
+// The existing save functions reset their forms only after success. Detect that reset,
+// then collapse and refresh the already-rendered master lists without changing persistence.
+// Native reset() does not dispatch reset in all browsers; intercept successful saves
+// through explicit reset event listener and defer collapsing until the save returns.
+function f05WatchSuccessfulReset(){for(const [id] of f05Panels){const form=$(id);const originalReset=form.reset.bind(form);
+ form.reset=function(){originalReset();f05SetOpen(id,false);};}}
+
+async function init(){try{f05Init();f05WatchSuccessfulReset();db=await openDb();document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id===b.dataset.tab));$('message').textContent=''}));$('planSearch').addEventListener('input',e=>{planView.search=e.target.value;planView.page=1;render()});$('planFilter').addEventListener('change',e=>{planView.filter=e.target.value;planView.page=1;render()});$('backToPlans').addEventListener('click',()=>{planView.selectedId=null;render();$('plans').scrollIntoView({block:'start'})});$('planForm').addEventListener('submit',createPlan);$('taxForm').addEventListener('submit',createTax);$('cardForm').addEventListener('submit',createCard);$('cardTransactionForm').addEventListener('submit',createCardTransaction);$('cardRefundForm').addEventListener('submit',createRefundV22);$('existingPeriodForm').addEventListener('submit',createExistingPeriodV22);$('taxTemplateForm').addEventListener('submit',createTaxTemplate);$('generateTaxBills').addEventListener('click',generateYearTaxes);$('generateTaxYear').value=new Date().getFullYear();$('historyCategory').addEventListener('change',()=>render());$('historySearch').addEventListener('input',()=>render());$('clearHistory').addEventListener('click',()=>{$('historyCategory').value='all';$('historySearch').value='';if($('historyArchiveV227'))$('historyArchiveV227').value='all';render()});$('historyCsv').addEventListener('click',exportHistoryCsv);$('historyPdf').addEventListener('click',printHistory);$('taxForm').elements.year.value=new Date().getFullYear();$('taxBack').addEventListener('click',()=>{selectedTaxMasterV24=null;render()});await ensureCurrentTaxYearV24();await render()}catch(err){message(`無法啟動資料庫：${err.message}`);document.querySelectorAll('form button').forEach(x=>x.disabled=true)}}init();
 
 // V2.2.5: card settings and safe tax master deletion.
 async function editCardReminderV25(id){const c=(await all('cards')).find(x=>x.id===id);if(!c||c.archived)return message('找不到可編輯的信用卡');const raw=prompt(`${c.name}：提前提醒天數（0～365）`,String(c.remindDays??7));if(raw===null)return;const n=Number(raw);if(!Number.isInteger(n)||n<0||n>365)return message('提醒天數必須介於 0～365');await performV22(['cards','cardPeriods'],(d,ops)=>{const x=d.cards.find(v=>v.id===id);assertV22(x&&!x.archived,'信用卡狀態已變更');x.remindDays=n;ops.put('cards',x);for(const p of d.cardPeriods.filter(v=>v.cardId===id)){p.remindDays=n;ops.put('cardPeriods',p)}},'提醒設定已儲存並立即生效')}

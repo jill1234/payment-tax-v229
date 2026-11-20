@@ -292,3 +292,11 @@ form label:has(>input:is([type="date"],[type="month"],[type="datetime-local"])){
 .f03-status{display:inline-block!important;width:max-content;padding:5px 11px;border-radius:999px;font-weight:600;white-space:nowrap}
 .f03-active{background:#fff0d9;color:#9a570b}.f03-closed{background:#dff3e4;color:#267345}
 .f03-panel{max-height:85vh;overflow:auto}.f03-row{display:flex;gap:12px;justify-content:space-between;align-items:center;margin:10px 0}.f03-row input{max-width:150px}.f03-row input:disabled{opacity:.65}.f03-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}.f03-error{color:#b42318}.f03-sum{font-weight:600}
+
+/* F05: separate collapsible creation from persistent master lists */
+.f05-new-panel{margin:18px 0 20px;border:1px solid #e8e0ec;border-radius:16px;background:#fff;overflow:hidden}
+.f05-new-panel .panel{margin:0;border:0;border-top:1px solid #eee5f2;border-radius:0}
+.f05-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;text-align:left;border:0;border-radius:0;background:#f4eef8;padding:16px 18px;font-weight:650;color:#5b456e;white-space:normal}
+.f05-chevron{font-size:13px;white-space:nowrap;color:#705d80}
+.f05-master-panel{margin-top:16px}
+#plans:has(#planDetailView:not([hidden])) #f05-plan-new{display:none}
