@@ -336,7 +336,7 @@ function f05Snapshot(form){return JSON.stringify([...new FormData(form).entries(
 function f05Dirty(id){const f=$(id),s=f05State.get(id);return !!(s?.open&&f05Snapshot(f)!==s.initial);}
 function f05DiscardAllowed(id){return !f05Dirty(id)||confirm('資料尚未儲存，確定放棄修改嗎？');}
 function f05SetOpen(id,open){const f=$(id),panel=f.closest('.f05-new-panel'),toggle=panel.querySelector('.f05-toggle');
- f.hidden=!open;toggle.setAttribute('aria-expanded',String(open));panel.querySelector('.f05-chevron').textContent=open?'收合 ▴':'展開 ▾';
+ f.hidden=!open;f.style.display=open?'':'none';toggle.setAttribute('aria-expanded',String(open));panel.querySelector('.f05-chevron').textContent=open?'收合 ▴':'展開 ▾';
  f05State.set(id,{open,initial:f05Snapshot(f)});
 }
 function f05Init(){
@@ -384,7 +384,7 @@ const encoder=new TextEncoder(),decoder=new TextDecoder();function crc32(bytes){
 // V2.2.9 isolated test: complete JSON/ZIP backups, format validation and atomic restore.
 const BACKUP_FORMAT_V229='payment-tax-v229-complete', BACKUP_VERSION_V229=1;
 const BACKUP_SOURCE_V229='payment-tax-v229-prod', BACKUP_APP_VERSION_V229='2.2.9';
-let backupDownloadStartedV229=false;
+let backupDownloadStartedV229=false; // retained for backup status only; not a restore prerequisite
 function downloadBlobV25(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000)}
 function csvEscapeV25(v){return '"'+String(v??'').replaceAll('"','""')+'"'}
 function bytesToBase64V229(bytes){let chunks=[];for(let i=0;i<bytes.length;i+=8192)chunks.push(String.fromCharCode(...bytes.subarray(i,i+8192)));return btoa(chunks.join(''))}
@@ -406,7 +406,27 @@ async function parseBackupV25(file){if(!file||file.size>500*1024*1024)throw Erro
  if(snap?.source!==BACKUP_SOURCE_V229||snap?.appVersion!==BACKUP_APP_VERSION_V229)throw Error('僅接受 V2.2.9 正式版產生的備份；測試版與其他版本不可匯入');
  if(snap.archiveOnly===true)throw Error('歷史封存安全副本不可作為完整還原檔');
  validateRelationsV229(snap,attachments);return {snap,attachments}}
-async function restoreFullV25(){const file=$('fullRestoreFile').files?.[0];try{if(!backupDownloadStartedV229||!$('backupSavedV229')?.checked)throw Error('請先下載目前資料的完整備份，確認檔案已保存並勾選確認');const {snap,attachments}=await parseBackupV25(file);if(!confirm('備份日期：'+snap.createdAt+'\n即將覆蓋 V2.2.9 正式資料庫。確認繼續？'))return;if(!confirm('最後確認：已保存目前完整備份，確定覆蓋所有正式資料？'))return;await new Promise((resolve,reject)=>{const tx=db.transaction(STORES,'readwrite');for(const store of STORES)tx.objectStore(store).clear();for(const store of STORES.filter(x=>x!=='attachments'))for(const row of snap.stores[store])tx.objectStore(store).put(row);for(const row of attachments)tx.objectStore('attachments').put(row);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error||Error('寫入失敗'));tx.onabort=()=>reject(tx.error||Error('交易取消'))});resetBackupApprovalV229();await render();message('V2.2.9 正式資料完整還原成功，請逐項核對。')}catch(e){message('還原未執行或失敗：'+e.message)}}
+function confirmLatestBackupV229(file,snap){
+ return new Promise(resolve=>{
+  const dialog=$('restoreLatestDialogV229');
+  const check=$('restoreLatestConfirmV229');
+  const go=$('restoreLatestGoV229');
+  const cancel=$('restoreLatestCancelV229');
+  const filename=$('restoreLatestFileV229');
+  const date=$('restoreLatestDateV229');
+  if(!dialog||!check||!go||!cancel||!filename||!date){resolve(false);return;}
+  filename.textContent=file.name;
+  const parsed=new Date(snap.createdAt);
+  date.textContent=Number.isNaN(parsed.getTime())?String(snap.createdAt||'未提供'):parsed.toLocaleString('zh-TW');
+  check.checked=false;go.disabled=true;dialog.hidden=false;
+  const finish=value=>{dialog.hidden=true;check.removeEventListener('change',onChange);go.removeEventListener('click',onGo);cancel.removeEventListener('click',onCancel);resolve(value)};
+  const onChange=()=>{go.disabled=!check.checked};
+  const onGo=()=>{if(check.checked)finish(true)};
+  const onCancel=()=>finish(false);
+  check.addEventListener('change',onChange);go.addEventListener('click',onGo);cancel.addEventListener('click',onCancel);
+ });
+}
+async function restoreFullV25(){const file=$('fullRestoreFile').files?.[0];try{if(!$('backupSavedV229')?.checked)throw Error('請先確認目前完整備份已保存，並勾選確認框');const {snap,attachments}=await parseBackupV25(file);if(!await confirmLatestBackupV229(file,snap))return;if(!confirm('最後確認：已保存目前完整備份，確定覆蓋所有正式資料？'))return;await new Promise((resolve,reject)=>{const tx=db.transaction(STORES,'readwrite');for(const store of STORES)tx.objectStore(store).clear();for(const store of STORES.filter(x=>x!=='attachments'))for(const row of snap.stores[store])tx.objectStore(store).put(row);for(const row of attachments)tx.objectStore('attachments').put(row);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error||Error('寫入失敗'));tx.onabort=()=>reject(tx.error||Error('交易取消'))});resetBackupApprovalV229();await render();message('V2.2.9 正式資料完整還原成功，請逐項核對。')}catch(e){message('還原未執行或失敗：'+e.message)}}
 async function exportAllCsvV25(){
  const rows=await reportTransactionsV226(),head=['日期','類別','名稱／期別','交易類型','金額（元）','核對狀態','備註'];
  const table=[head,...rows.map(r=>[r.date,r.category,r.name,r.type,(r.amount/100).toString(),r.status,r.note])];

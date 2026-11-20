@@ -300,3 +300,9 @@ form label:has(>input:is([type="date"],[type="month"],[type="datetime-local"])){
 .f05-chevron{font-size:13px;white-space:nowrap;color:#705d80}
 .f05-master-panel{margin-top:16px}
 #plans:has(#planDetailView:not([hidden])) #f05-plan-new{display:none}
+
+/* F05: force hidden form state even when generic form/panel CSS declares display. */
+#f05-plan-new #planForm[hidden],#f05-tax-new #taxTemplateForm[hidden],#f05-card-new #cardForm[hidden]{display:none!important}
+
+.restore-latest-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
+#restoreLatestDialogV229[hidden]{display:none!important}
